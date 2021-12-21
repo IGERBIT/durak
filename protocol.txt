@@ -1,0 +1,12 @@
+p1: hi[1](name:32) ==> (ok:1)
+p1: wait_oponent[2]()
+	p2: hi[1](name:32) ==> (ok:1)
+	p1: wait_oponent[2]() => (ok: 1)
+ ==> (ok:1)
+p1: get_cards[3]() => (cards, game_info, who_first)
+p2: get_cards[3]() => (cards, game_info, who_first)
+p1: wait_opponent[2] () 
+	p2 select card 
+==> (ok:1)
+
+ 

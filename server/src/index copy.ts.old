@@ -1,0 +1,269 @@
+import { createServer, Socket } from "net";
+import { socketCodeHandler } from "./socketHandler";
+import { CardSuit, CardType, CardValue, GameStatus, ICard, IPlayer } from "./types/game";
+import { canCardUse, card2cardtype, cardEquals, cardtype2card, generateCards, shuffleArray } from "./utils/game";
+
+const MIN_CARD_IN_HANDS = 6;
+
+let cards: ICard[] = shuffleArray(generateCards(), 10);
+let trump: ICard;
+let fall: ICard[] = [];
+let attackCards: ICard[] = [];
+let playerMove: IPlayer = null;
+let winner: IPlayer = null;
+let status = GameStatus.Idle;
+let players: IPlayer[] = []
+
+function getMe(socket: Socket): IPlayer {
+	return players.find(p => p.socket == socket);
+}
+
+
+function getOpponent(socket: Socket): IPlayer {
+	return players.find(p => p.socket != socket);
+}
+
+let fn = socketCodeHandler({
+	// connect player
+	2: ({ store, payload, socket }) => {
+
+		if (status != GameStatus.Idle) socket.end();
+
+		let nickname = payload.toString("utf8", 0);
+		store.nickname = nickname;
+		store.cards = [];
+
+		players.push({ socket, store });
+		console.log(store.nickname + " connected")
+
+		if (players.length == 2) {
+			startGame();
+		}
+
+		return 0;
+	},
+
+	// getStatus
+	3: ({ store, payload, socket }) => {
+		let me = getMe(socket), opponent = getOpponent(socket);
+
+		if (!me) return 1;
+
+		console.log(`get ${me.store.nickname}`);
+
+		let playerStatus = status;
+		let myCards = me.store.cards;
+		let opponentCards = opponent?.store?.cards ?? [];
+
+		if (status == GameStatus.Move) playerStatus = (me == playerMove) ? GameStatus.YourMove : GameStatus.OpponentMove;
+		if (status == GameStatus.Def) playerStatus = (me == playerMove) ? GameStatus.YourDef : GameStatus.OpponentDef;
+
+		if (status == GameStatus.Finish) playerStatus = (me == winner) ? GameStatus.Win : GameStatus.Lose;
+
+		let size = 1 + 2 + 1 + 1;
+
+		size += 4 + (2 * myCards.length);
+		size += 4 + (2 * opponentCards.length);
+		size += 4 + (2 * attackCards.length);
+		size += 4;
+
+		let buffer = Buffer.alloc(size);
+
+
+
+		buffer.writeInt8(playerStatus);
+
+		buffer.writeUInt16LE(card2cardtype(trump) & 0xFFFF, 1);
+		buffer.writeUInt8(cards.length, 3);
+		buffer.writeUInt8(fall.length, 4);
+
+		let offset = 5;
+
+		buffer.writeUInt32LE(myCards.length, offset);
+		offset += 4;
+		for (let i = 0; i < myCards.length; i++) { buffer.writeUInt16LE(card2cardtype(myCards[i]), offset); offset += 2 }
+
+		buffer.writeUInt32LE(opponentCards.length, offset);
+		offset += 4;
+		for (let i = 0; i < opponentCards.length; i++) { buffer.writeUInt16LE(card2cardtype({ suit: CardSuit.None, value: CardValue.None }), offset); offset += 2 }
+
+		buffer.writeUInt32LE(attackCards.length, offset);
+		offset += 4;
+		for (let i = 0; i < attackCards.length; i++) { buffer.writeUInt16LE(card2cardtype(attackCards[i]), offset); offset += 2 }
+
+		buffer.writeUInt32LE(0, offset);
+
+
+		return { data: buffer, code: 0 };
+	},
+	// finish move
+	4: ({ socket, store, payload }) => {
+		let me = getMe(socket), opponent = getOpponent(socket);
+
+		if (!me) return 1; // error
+		if (me != playerMove) return 1; // error
+		if (status != GameStatus.Move) return 1; // error
+		let moveCards: ICard[] = []
+
+		let count = payload.readUInt32LE(0);
+
+		for (let i = 0; i < count; i++) {
+			moveCards.push(cardtype2card(payload.readInt16LE(4 + (i * 2))))
+		}
+
+		console.log(store.nickname + " finish move", moveCards);
+
+		if (moveCards.length < 1) return 1;
+
+		let firstValue = moveCards[0].value;
+
+		// One Value
+		if (moveCards.some(card => card.value != firstValue)) return 1;
+
+		// Only self-cards
+		if (moveCards.some(card => me.store.cards.some(mcard => cardEquals(mcard, card)) == false)) return 1;
+
+		attackCards = moveCards;
+		me.store.cards = me.store.cards.filter(x => moveCards.every(c => !cardEquals(c, x)));
+
+		playerMove = opponent;
+		status = GameStatus.Def;
+		sortCards();
+
+		return 0;
+	},
+
+	5: ({ socket, store, payload }) => {
+		let me = getMe(socket), opponent = getOpponent(socket);
+
+		if (!me) return 1; // error
+		if (me != playerMove) return 2; // error
+		if (status != GameStatus.Def) return 3; // error
+		let moveCards: ICard[] = []
+
+		let isPass = payload.readUInt8(0) == 0;
+
+		if (!isPass) {
+			let count = payload.readUInt32LE(1);
+
+			for (let i = 0; i < count; i++) {
+				moveCards.push(cardtype2card(payload.readInt16LE(5 + (i * 2))))
+			}
+
+			console.log(store.nickname + " finish def", moveCards);
+		}
+
+		if (isPass) {
+			me.store.cards = [...me.store.cards, ...attackCards];
+			attackCards = [];
+			playerMove = opponent;
+
+			console.log(store.nickname + " pass def");
+
+		}
+		else {
+
+			if (moveCards.length != attackCards.length) return 1;
+
+			// Only self-cards
+			if (moveCards.some(card => me.store.cards.some(mcard => cardEquals(mcard, card)) == false)) return 1;
+
+			for (let i = 0; i < moveCards.length; i++) {
+				const defCard = moveCards[i];
+				const atcCard = attackCards[i];
+
+				if (!canCardUse(defCard, atcCard, trump.suit)) return 1;
+			}
+
+			me.store.cards = me.store.cards.filter(x => moveCards.every(c => !cardEquals(c, x)));
+			fall = [...fall, ...attackCards, ...moveCards];
+
+
+
+			playerMove = me;
+		}
+
+
+
+		status = GameStatus.Move;
+
+
+		giveCards();
+		sortCards();
+
+		for (const player of players) {
+			if (player.store.cards.length < 1) {
+				winner = player;
+				status = GameStatus.Finish;
+				break;
+			}
+		}
+
+
+		return 0;
+	}
+})
+
+const server = createServer(socket => {
+	console.log(socket.remoteAddress);
+	if (status != GameStatus.Idle) socket.destroy();
+	
+	fn(socket);
+
+})
+
+function giveCards() {
+	let stillNeed = true;
+
+	while (stillNeed && cards.length > 0) {
+		stillNeed = false;
+
+		for (const player of [players[0], players[1]]) {
+			if (cards.length < 1) {
+				stillNeed = false;
+				break;
+			}
+			if (player.store.cards.length < (MIN_CARD_IN_HANDS - 1)) stillNeed = true;
+
+			if (player.store.cards.length < MIN_CARD_IN_HANDS) {
+				player.store.cards.push(cards.shift());
+			}
+		}
+	}
+
+	console.log(`cards:`, cards);
+	console.log(`cards[0]:`, players[0].store.cards);
+	console.log(`cards[1]:`, players[1].store.cards);
+}
+
+function sortCards() {
+	for (const player of [players[0], players[1]]) {
+		player.store.cards.sort((a, b) => {
+			if (a.suit != trump.suit && b.suit == trump.suit) return -1;
+			return b.value - a.value;
+		})
+	}
+}
+
+
+function startGame() {
+	cards = shuffleArray(generateCards(), 10);
+	trump = cards[cards.length - 1];
+
+	giveCards();
+	sortCards();
+
+	status = GameStatus.Move;
+	playerMove = players[0];
+}
+
+
+
+
+server.on("error", (err) => {
+	console.log('err', err);
+})
+
+server.listen(2021);
+
+console.log(`started!`)
