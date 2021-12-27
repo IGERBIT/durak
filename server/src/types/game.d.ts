@@ -10,6 +10,7 @@ declare const enum GameStatus {
 	Finish = 5,
 	Win = 6,
 	Lose = 7,
+	MoveLog = 8,
 	Move = 100,
 	Def = 101
 }
@@ -66,5 +67,7 @@ declare interface ILobby {
 	playerMove: string,
 	winner: string,
 	status: GameStatus,
-	players: string[];
+	players: string[],
+	attackHist: ICard[]
+	defendHist: ICard[]
 }

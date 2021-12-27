@@ -9,7 +9,7 @@ const handlers: Record<number, CodeHandler> = {}
 
 export async function RequestHandler(buff: Buffer): Promise<Buffer> {
 
-	console.log(buff);
+	//console.log(buff);
 
 	let code = buff.readUInt16LE(0);
 	let hash = buff.slice(2, 10).toString();
@@ -45,7 +45,7 @@ export async function RequestHandler(buff: Buffer): Promise<Buffer> {
 	let codeBuff = Buffer.alloc(2);
 	codeBuff.writeUInt16LE(retcode);
 	let rez = Buffer.concat([codeBuff, retbuffer]);
-	console.log('res', rez );
+	//console.log('res', rez );
 
 	return rez;
 

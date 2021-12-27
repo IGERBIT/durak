@@ -1,7 +1,7 @@
 Language: Cpp
 BasedOnStyle: Google
 
-IndentWidth: 4
+IndentWidth: 2
 ColumnLimit: 150
 MaxEmptyLinesToKeep: 2
 SortIncludes: CaseInsensitive

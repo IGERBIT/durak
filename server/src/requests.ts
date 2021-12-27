@@ -17,7 +17,9 @@ function createLobby(): ILobby {
 		trump: null,
 		players: [],
 		attack: [],
-		playerMove: null
+		playerMove: null,
+		attackHist: [],
+		defendHist: []
 	}
 
 	lobby.trump = lobby.cards[lobby.cards.length - 1];
@@ -62,7 +64,14 @@ function startGame(id: string) {
 
 
 regHandler(2, ({ player, payload }) => {
-	let nickname = payload.toString("utf8", 0);
+	let len = payload.readUInt32LE(0);
+
+	let nik = payload.slice(4, 4 + len);
+
+	let nickname = nik.toString("utf8", 0);
+
+	console.log(`connect: `, nickname, nik);
+
 	player.store.nickname = nickname;
 	player.store.cards = [];
 
@@ -109,12 +118,17 @@ regHandler(3, ({ player, payload }) => {
 
 	let myCards = player?.store?.cards ?? [];
 	let opponentCards = opponent?.store?.cards ?? [];
+	let opponentNik = opponent?.store?.nickname ?? "";
+
+	let attack = status == GameStatus.MoveLog ? lobby.attackHist : lobby.attack;
+	let def = status == GameStatus.MoveLog ? lobby.defendHist : [];
 
 
 	size += 4 + (2 * myCards.length);
 	size += 4 + (2 * opponentCards.length);
-	size += 4 + (2 * lobby.attack.length);
-	size += 4;
+	size += 4 + (2 * attack.length);
+	size += 4 + (2 * def.length);
+	size += 4
 
 	let buffer = Buffer.alloc(size);
 
@@ -129,12 +143,18 @@ regHandler(3, ({ player, payload }) => {
 	offset = buffer.writeUInt32LE(opponentCards.length, offset);
 	for (let i = 0; i < opponentCards.length; i++) { offset = buffer.writeUInt16LE(card2cardtype({ suit: CardSuit.None, value: CardValue.None }), offset); }
 
-	offset = buffer.writeUInt32LE(lobby.attack.length, offset);
-	for (let i = 0; i < lobby.attack.length; i++) { offset = buffer.writeUInt16LE(card2cardtype(lobby.attack[i]), offset); }
+	offset = buffer.writeUInt32LE(attack.length, offset);
+	for (let i = 0; i < attack.length; i++) { offset = buffer.writeUInt16LE(card2cardtype(attack[i]), offset); }
 
-	offset = buffer.writeUInt32LE(0, offset);
+	offset = buffer.writeUInt32LE(def.length, offset);
+	for (let i = 0; i < def.length; i++) { offset = buffer.writeUInt16LE(card2cardtype(def[i]), offset); }
 
-	return { data: buffer, code: 0 };
+	let nickBuff = Buffer.from(opponentNik);
+
+	offset = buffer.writeUInt32LE(nickBuff.length || 0, offset);
+	
+
+	return { data: Buffer.concat([buffer, nickBuff]), code: 0 };
 })
 
 function sortCards(id: string) {
@@ -200,8 +220,11 @@ regHandler(5, ({ player, payload }) => {
 
 	if (isPass) {
 		player.store.cards = [...player.store.cards, ...lobby.attack];
+		lobby.attackHist = lobby.attack;
+		lobby.defendHist = [];
 		lobby.attack = [];
 		lobby.playerMove = opponent.id;
+		
 	}
 	else {
 		let count = payload.readUInt32LE(1);
@@ -223,6 +246,9 @@ regHandler(5, ({ player, payload }) => {
 			if (!canCardUse(defCard, atcCard, lobby.trump.suit)) return 7;
 		}
 
+		lobby.attackHist = lobby.attack;
+		lobby.defendHist = moveCards;
+
 		player.store.cards = player.store.cards.filter(x => moveCards.every(c => !cardEquals(c, x)));
 		lobby.fall.push(...lobby.attack);
 		lobby.fall.push(...moveCards);
@@ -230,17 +256,46 @@ regHandler(5, ({ player, payload }) => {
 		lobby.playerMove = player.id;
 	}
 
-	lobby.status = GameStatus.Move;
 	giveCards(lobby.id);
 	sortCards(lobby.id);
 
-	for (const player of lobby.players.map(getPlayer)) {
-		if (player?.store?.cards?.length < 1) {
-			lobby.winner = player.id;
-			lobby.status = GameStatus.Finish;
-			break;
+	lobby.status = GameStatus.MoveLog;
+	
+
+	setTimeout(() => {
+		lobby.status = GameStatus.Move;
+
+		for (const player of lobby.players.map(getPlayer)) {
+			if (player?.store?.cards?.length < 1) {
+				lobby.winner = player.id;
+				lobby.status = GameStatus.Finish;
+				break;
+			}
 		}
-	}
+	}, (2000 * lobby.attackHist.length) + 1000);
+
+	return 0;
+})
+
+regHandler(6, ({ player, payload }) => {
+	let len = payload.readUInt32LE(0);
+
+	let nik = payload.slice(4, 4 + len);
+
+	let nickname = nik.toString("utf8", 0);
+
+	console.log(`connected: `, nickname, nik);
+
+	player.store.nickname = nickname;
+	player.store.cards = [];
+
+	return 0;
+})
+
+regHandler(7, ({ player, payload }) => {
+	let len = payload.readUInt32LE(0);
+
+	let lobbyCode = payload.slice(4, 4 + len).toString("utf8", 0);
 
 	return 0;
 })

@@ -2,37 +2,35 @@
 #include "console_client.cpp"
 #include "bot_client.cpp"
 
-
-
-int main(int argc, char* argv[]) {
-
-    int bot = true;
+int main() {
+    int bot = -1;
     std::unique_ptr<BuraBot> bot_instance;
-    std::string ip{"127.0.0.1"};
+    std::string ip{"cards.igerbit.ru"};
 
     std::string answer;
 
-    std::cout << "Ip (default: 127.0.0.1): ";
+    std::cout << "Ip (default: " << ip << "): ";
     std::getline(std::cin, answer);
     if(!answer.empty()) ip = answer;
 
-    std::cout << "Enable bot (Y/N | default: Yes): ";
-    std::getline(std::cin, answer);
 
-    if(answer == "N") bot = false;
+    while (bot == -1) {
+        std::cout << "Enable bot (Y/N | default: Yes): ";
+        std::getline(std::cin, answer);
+        if(answer == "N") bot = 0;
+        if(answer == "Y") bot = 1;
+    }
 
     BuraConsole console(ip, "2021");
 
-    if(bot) {
+    if(bot == 1) {
         bot_instance = std::make_unique<BuraBot>(ip, "2021");
         bot_instance->launch();
     }
 
-    std::wstring nickname;
+    std::string nickname;
     std::wcout << L"Enter your nickname: ";
-    std::wcin >> nickname;
-
-
+    std::cin >> nickname;
 
     console.launch(nickname);
     if(bot_instance) {
